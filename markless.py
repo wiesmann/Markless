@@ -107,7 +107,7 @@ class Processor:
       self.output_line(makebox(self.box_lines, _box_code))
       self.box_lines = []
 
-  def process(self, lines):
+  def process_lines(self, lines):
     for line in lines:
       if line.startswith('    '):
         self.flush_text()
@@ -119,10 +119,13 @@ class Processor:
     self.flush_box()
     self.flush_text()
 
+  def process(self, input_file):
+    lines = itertools.imap(lambda l : l.decode(ENCODING), input_file)
+    self.process_lines(lines)
+
 def process(input_file, output_file):
   processor = Processor(output_file)
-  lines = itertools.imap(lambda l : l.decode(ENCODING), input_file)
-  processor.process(lines)
+  processor.process(input_file)
 
 def main(argv):
   try:
