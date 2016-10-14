@@ -49,7 +49,7 @@ def _emphasis(text, emphasis_char):
       yield emphasis_char
 
 def emphasis(text, emphasis_char):
-  inner = process_run(text)
+  inner = process_block(text)
   return ''.join(_emphasis(inner, emphasis_char))
 
 def emphasis_runs(input, splitter, emphasis_char):
@@ -59,24 +59,24 @@ def emphasis_runs(input, splitter, emphasis_char):
     if index % 2:
       parts.append(emphasis(run, emphasis_char))
     else:
-      parts.append(process_run(run))
+      parts.append(process_block(run))
   return ''.join(parts)
 
-def process_run(input):
+def process_block(input):
   if input.startswith('###'):
-    return makebox([process_run(input[3:].strip())], _box_light)
+    return makebox([process_block(input[3:].strip())], _box_light)
   if input.startswith('##'):
-    return makebox([process_run(input[2:].strip())], _box_heavy)
+    return makebox([process_block(input[2:].strip())], _box_heavy)
   if input.startswith('#'):
-    return makebox([process_run(input[1:].strip())], _box_double)
+    return makebox([process_block(input[1:].strip())], _box_double)
   # List
   if input.startswith('*') or input.startswith('+') or input.startswith('-'):
-    return u'•' + process_run(input[1:])
+    return u'•' + process_block(input[1:])
   # Blockquote
   if input.startswith('>>'):
-    return u'█' + process_run(input[2:])
+    return u'█' + process_block(input[2:])
   if input.startswith('>'):
-    return u'▌' + process_run(input[1:])
+    return u'▌' + process_block(input[1:])
   # Emphasis
   if input.find('___') >= 0:
     return emphasis_runs(input, '___', _unichr(0x0333))
@@ -86,24 +86,43 @@ def process_run(input):
     return emphasis_runs(input, '_', _unichr(0x20E8))
   return input
 
-def _process(input):
-  box_lines = []
-  for line in input:
-    if line.startswith('    '):
-      box_lines.append(line[4:].rstrip())
-    else:
-      if box_lines:
-        yield makebox(box_lines, _box_code)
-        yield '\n'
-        box_lines = []
-      yield process_run(line)
-  if box_lines:
-    yield makebox(box_lines, _box_code)
+class Processor:
+  def __init__(self, output):
+    self.output = output
+    self.box_lines = []
+    self.text_lines = []
+
+  def output_line(self, line):
+    self.output.write(line.encode(ENCODING))
+
+  def flush_text(self):
+    if self.text_lines:
+      for line in self.text_lines:
+        self.output_line(process_block(line))
+      self.output_line('\n')
+      self.text_lines = []
+
+  def flush_box(self):
+    if self.box_lines:
+      self.output_line(makebox(self.box_lines, _box_code))
+      self.box_lines = []
+
+  def process(self, lines):
+    for line in lines:
+      if line.startswith('    '):
+        self.flush_text()
+        self.box_lines.append(line[4:].rstrip())
+      else:
+        self.flush_box()
+        self.text_lines.append(line)
+    # Flush everything
+    self.flush_box()
+    self.flush_text()
 
 def process(input_file, output_file):
+  processor = Processor(output_file)
   lines = itertools.imap(lambda l : l.decode(ENCODING), input_file)
-  for output_line in _process(lines):
-    output_file.write(output_line.encode(ENCODING))
+  processor.process(lines)
 
 def main(argv):
   try:
