@@ -112,9 +112,9 @@ class Processor:
       if line.startswith('    '):
         self.flush_text()
         self.box_lines.append(line[4:].rstrip())
-      else:
-        self.flush_box()
-        self.text_lines.append(line)
+        continue
+      self.flush_box()
+      self.text_lines.append(line)
     # Flush everything
     self.flush_box()
     self.flush_text()
