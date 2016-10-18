@@ -34,13 +34,26 @@ def count_start(input, char):
       return count
   return count
 
-
 def display_len(input):
   len = 0
   for c in input:
     if unicodedata.category(c) != 'Mn':
       len += 1
   return len
+
+def reflow(lines, width):
+  block = ' '.join(lines)
+  total = 0
+  buffer = []
+  for word in block.split(' '):
+    word_len = display_len(word)
+    if word_len + total + len(buffer) > width:
+      yield ' '.join(buffer)
+      total = 0
+      buffer = []
+    buffer.append(word)
+    total += word_len
+  yield ' '.join(buffer)
 
 def _makebox(in_lines, box):
   width = max(map(display_len, in_lines))
@@ -53,9 +66,10 @@ def _makebox(in_lines, box):
 def makebox(in_lines, box):
   return '\n'.join(_makebox(in_lines, box))
 
-def makelist(in_lines, bullet):
+def makelist(in_lines, bullet, width):
+  in_lines = tuple(reflow(in_lines, width))
   indent = display_len(bullet)
-  joiner = '\n' + ('|' * indent)
+  joiner = '\n' + (' ' * indent)
   return bullet + joiner.join(in_lines) + '\n'
 
 def makequote(in_lines, mark):
@@ -104,13 +118,17 @@ class Processor:
     self.text_lines = []
     self.list_lines = []
     self.is_list = False
+    self.width = 80
 
   def output_text(self, line):
     self.output.write(line.encode(ENCODING))
 
+  def reflow(self, lines):
+    return tuple(reflow(lines, self.width))
+
   def flush_text(self):
     if self.text_lines:
-      formatted_lines = map(process_run, self.text_lines)
+      formatted_lines = map(process_run, self.reflow(self.text_lines))
       self.output_text('\n'.join(formatted_lines))
       self.output_text('\n')
       self.text_lines = []
@@ -118,7 +136,7 @@ class Processor:
   def flush_list(self):
     if self.list_lines:
       formatted_lines = map(process_run, self.list_lines)
-      self.output_text(makelist(formatted_lines, u'• '))
+      self.output_text(makelist(formatted_lines, u'• ', self.width - 2))
       self.list_lines = []
 
   def flush_box(self):
@@ -140,13 +158,13 @@ class Processor:
       start_hash = count_start(line, '#')
       if start_hash:
         self.flush_all()
-        content = process_run(line[start_hash:].strip())
+        content = self.reflow([process_run(line[start_hash:].strip())])
         if start_hash == 1:
-          self.output_text(makebox([content], _box_double))
+          self.output_text(makebox(content, _box_double))
         elif start_hash == 2:
-          self.output_text(makebox([content], _box_heavy))
+          self.output_text(makebox(content, _box_heavy))
         else:
-          self.output_text(makebox([content], _box_light))
+          self.output_text(makebox(content, _box_light))
         self.output_text('\n')
         continue
       start_greater = count_start(line, '>')
