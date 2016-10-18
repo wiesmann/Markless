@@ -21,11 +21,19 @@ _box_heavy =  u'┏─┓┃ ┃┗─┛'
 _box_code =   u'╭─╮┃ ┃╰─╯'
 _list_bullets = u'*+-'
 
-
-
 def _unichr(code):
   s = "\\U%08x" % code
   return s.decode('unicode-escape')
+
+def count_start(input, char):
+  count = 0
+  for c in input:
+    if c == char:
+      count += 1
+    else:
+      return count
+  return count
+
 
 def display_len(input):
   len = 0
@@ -47,8 +55,11 @@ def makebox(in_lines, box):
 
 def makelist(in_lines, bullet):
   indent = display_len(bullet)
-  joiner = '\n' + (' ' * indent)
+  joiner = '\n' + ('|' * indent)
   return bullet + joiner.join(in_lines) + '\n'
+
+def makequote(in_lines, mark):
+  return mark + ('\n' + mark).join(in_lines) + '\n'
 
 def is_list_start(line):
   line = line.strip()
@@ -64,7 +75,7 @@ def _emphasis(text, emphasis_char):
       yield emphasis_char
 
 def emphasis(text, emphasis_char):
-  inner = process_block(text)
+  inner = process_run(text)
   return ''.join(_emphasis(inner, emphasis_char))
 
 def emphasis_runs(input, splitter, emphasis_char):
@@ -74,7 +85,7 @@ def emphasis_runs(input, splitter, emphasis_char):
     if index % 2:
       parts.append(emphasis(run, emphasis_char))
     else:
-      parts.append(process_block(run))
+      parts.append(process_run(run))
   return ''.join(parts)
 
 def process_run(input):
@@ -85,23 +96,6 @@ def process_run(input):
   if input.find('_') >= 0:
     return emphasis_runs(input, '_', _unichr(0x20E8))
   return input
-
-def process_block(input):
-  if input.startswith('###'):
-    return makebox([process_run(input[3:].strip())], _box_light)
-  if input.startswith('##'):
-    return makebox([process_run(input[2:].strip())], _box_heavy)
-  if input.startswith('#'):
-    return makebox([process_run(input[1:].strip())], _box_double)
-  # List
-  #if is_list_start(input):
-  #  return makelist([input[1:].strip()], u'• ')
-  # Blockquote
-  if input.startswith('>>'):
-    return u'█' + process_run(input[2:])
-  if input.startswith('>'):
-    return u'▌' + process_run(input[1:])
-  return process_run(input)
 
 class Processor:
   def __init__(self, output):
@@ -140,23 +134,30 @@ class Processor:
 
   def process_lines(self, lines):
     for line in lines:
-      if not line:
+      if not line.strip():
         self.flush_all()
         continue
-      if line.startswith('###'):
+      start_hash = count_start(line, '#')
+      if start_hash:
         self.flush_all()
-        self.output_text(makebox([process_run(line[3:].strip())], _box_light))
+        content = process_run(line[start_hash:].strip())
+        if start_hash == 1:
+          self.output_text(makebox([content], _box_double))
+        elif start_hash == 2:
+          self.output_text(makebox([content], _box_heavy))
+        else:
+          self.output_text(makebox([content], _box_light))
+        self.output_text('\n')
         continue
-      if line.startswith('###'):
+      start_greater = count_start(line, '>')
+      if start_greater:
         self.flush_all()
-        self.output_text(makebox([process_run(line[2:].strip())], _box_heavy))
-        continue
-      if line.startswith('#'):
-        self.flush_all()
-        self.output_text(makebox([process_run(line[1:].strip())], _box_double))
+        prefix = u'▌' * start_greater
+        self.output_text(makequote([line[start_greater:].strip()], prefix))
         continue
       if line.startswith('    '):
         self.flush_text()
+        self.flush_list()
         self.box_lines.append(line[4:].rstrip())
         continue
       self.flush_box()

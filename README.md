@@ -6,6 +6,9 @@ Markless is a small tool (a _hack_ really) that renders mark-down as plain text,
 * Lists is rendered using pretty bullets.
 * Headers and code are rendered in boxes.
 
+> Blockquote is rendered using block characters
+>> Second level
+
 For instance the part above is rendered in the following way:
 
     ╔══════════╗
