@@ -173,7 +173,9 @@ class Processor:
         prefix = u'▌' * start_greater
         self.output_text(makequote([line[start_greater:].strip()], prefix))
         continue
-      if line.startswith('    '):
+      start_spaces = count_start(line, ' ') + count_start(line, '\t') * 4
+      if start_spaces >= 4:
+
         self.flush_text()
         self.flush_list()
         self.box_lines.append(line[4:].rstrip())
