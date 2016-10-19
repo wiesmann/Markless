@@ -82,7 +82,7 @@ def is_list_start(line):
       return True
   return False
 
-def _emphasis(text, emphasis_char):
+def _emphasis(text, emphasis_char, ):
   for char in text:
     yield char
     if char.isalnum():
@@ -109,16 +109,22 @@ def process_run(input):
     return emphasis_runs(input, '__', _unichr(0x0332))
   if input.find('_') >= 0:
     return emphasis_runs(input, '_', _unichr(0x20E8))
+  if input.find('`') >= 0:
+    return emphasis_runs(input, '`', _unichr(0x0325))
   return input
 
+def get_columns():
+  dimensions = map(int,  os.popen('stty size', 'r').read().split())
+  return dimensions[1]
+
 class Processor:
-  def __init__(self, output):
+  def __init__(self, output, columns=None):
     self.output = output
     self.box_lines = []
     self.text_lines = []
     self.list_lines = []
     self.is_list = False
-    self.width = 80
+    self.width = columns or get_columns()
 
   def output_text(self, line):
     self.output.write(line.encode(ENCODING))
@@ -175,7 +181,6 @@ class Processor:
         continue
       start_spaces = count_start(line, ' ') + count_start(line, '\t') * 4
       if start_spaces >= 4:
-
         self.flush_text()
         self.flush_list()
         self.box_lines.append(line[4:].rstrip())
