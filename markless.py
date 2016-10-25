@@ -118,16 +118,23 @@ def get_columns():
   return dimensions[1]
 
 class Processor:
-  def __init__(self, output, columns=None):
-    self.output = output
+  def __init__(self, columns=None):
     self.box_lines = []
     self.text_lines = []
     self.list_lines = []
     self.is_list = False
+    self.buffer = ""
     self.width = columns or get_columns()
 
   def output_text(self, line):
-    self.output.write(line.encode(ENCODING))
+    self.buffer = self.buffer + line.encode(ENCODING)
+
+  def flush_output(self, output, prepend=None):
+    if prepend:
+      lines = self.buffer.split('\n')
+      lines = map(lambda l : prepend + l, lines)
+      self.buffer = '\n'.join(lines)
+    output.write(self.buffer)
 
   def reflow(self, lines):
     return tuple(reflow(lines, self.width))
@@ -203,27 +210,60 @@ class Processor:
     self.process_lines(lines)
 
 def process(input_file, output_file):
-  processor = Processor(output_file)
+  processor = Processor()
   processor.process(input_file)
+  processor.flush_output(output_file, "> ")
 
-def main(argv):
+def usage(command):
+  sys.stderr.write(
+      'Usage %s [--prefix <prefix>] [--input <input path>]'
+      ' [--output <output path>]' % command)
+  sys.exit(os.EX_USAGE)
+
+def main(command, argv):
+  prefix = None
+  input_path = []
+  output_path = None
+  arg_role = None
   try:
-    if argv:
-      input_file = open(argv[0])
-    else:
-      input_file = sys.stdin
-    if len(argv) >= 2:
-      output_file = open(argv[1], 'w')
+    for arg in argv:
+      if arg_role == 'prefix':
+        prefix = arg
+        continue
+      if arg_role == 'input':
+        input_path.append(arg)
+        continue
+      if arg_role == 'output':
+        output_path = arg
+        continue
+      if arg == '--prefix':
+        arg_role = 'prefix'
+        continue
+      if arg == '--input':
+        arg_role = 'input'
+        continue
+      if arg == '--output':
+        arg_role = 'output'
+        continue
+      usage(command)
+    # Arg parsed
+    input_files = map(open, input_path)
+    if not input_files:
+      input_files = [sys.stdin]
+    if output_path:
+      output_file = open(output_path, 'w')
     else:
       output_file = sys.stdout
-    process(input_file, output_file)
+    for input_file in input_files:
+      process(input_file, output_file)
+
   except IndexError:
-    sys.stderr.write('Error please specify input file\n')
-    sys.exit(os.EX_USAGE)
+    usage(command)
+
   except IOError:
-    sys.stderr.write('Could not read file %r\n' % argv[0])
+    sys.stderr.write('Reading Error')
     sys.exit(os.EX_DATAERR)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main(sys.argv[0], sys.argv[1:])
