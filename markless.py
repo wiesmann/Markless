@@ -143,7 +143,7 @@ class Processor:
     if self.text_lines:
       formatted_lines = map(process_run, self.reflow(self.text_lines))
       self.output_text('\n'.join(formatted_lines))
-      self.output_text('\n')
+      self.output_text('\n\n')
       self.text_lines = []
 
   def flush_list(self):
@@ -155,6 +155,7 @@ class Processor:
   def flush_box(self):
     if self.box_lines:
       self.output_text(makebox(self.box_lines, _box_code))
+      self.output_text('\n')
       self.box_lines = []
 
   def flush_all(self):
@@ -209,10 +210,10 @@ class Processor:
     lines = itertools.imap(lambda l : l.decode(ENCODING), input_file)
     self.process_lines(lines)
 
-def process(input_file, output_file):
+def process(input_file, output_file, prefix):
   processor = Processor()
   processor.process(input_file)
-  processor.flush_output(output_file, "> ")
+  processor.flush_output(output_file, prefix)
 
 def usage(command):
   sys.stderr.write(
@@ -255,7 +256,7 @@ def main(command, argv):
     else:
       output_file = sys.stdout
     for input_file in input_files:
-      process(input_file, output_file)
+      process(input_file, output_file, prefix)
 
   except IndexError:
     usage(command)
