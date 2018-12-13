@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/opt/local/bin/python2.7
 # -*- coding: utf-8 -*-
 # © Matthias Wiesmann
 
@@ -12,34 +12,38 @@ import re
 import sys
 import itertools
 import unicodedata
+import mistune
 
 ENCODING = 'utf-8'
 
-_box_light =  u'┌─┐│ │└─┘'
-_box_double = u'╔═╗║ ║╚═╝'
-_box_heavy =  u'┏─┓┃ ┃┗─┛'
-_box_code =   u'╭─╮┃ ┃╰─╯'
-_list_bullets = u'*+-'
+_box_light =  u'┌─┐│ │└─┘┬┴'
+_box_double = u'╔═╗║ ║╚═╝╦╩'
+_box_heavy =  u'┏─┓┃ ┃┗─┛┳┻'
+_box_code =   u'╭─╮┃ ┃╰─╯┳┻'
+
+_list_separator = chr(0x0B)  # Line Tabulation
+_cell_separator = chr(0x1E)  # Record separator
+_row_separator = chr(0x1D)  # Group separator
+
+def get_columns():
+  dimensions = map(int,  os.popen('stty size', 'r').read().split())
+  return dimensions[1]
 
 def _unichr(code):
   s = "\\U%08x" % code
   return s.decode('unicode-escape')
 
-def count_start(input, char):
-  count = 0
-  for c in input:
-    if c == char:
-      count += 1
-    else:
-      return count
-  return count
-
 def display_len(input):
+  if not input:
+    return 0
   len = 0
   for c in input:
     if unicodedata.category(c) != 'Mn':
       len += 1
   return len
+
+def max_display_len(inputs):
+  return max(map(display_len, inputs))
 
 def reflow(lines, width):
   block = ' '.join(lines)
@@ -64,156 +68,172 @@ def _makebox(in_lines, box):
   yield box[6] + box[7] * (width + 2) + box[8]
 
 def makebox(in_lines, box):
-  return '\n'.join(_makebox(in_lines, box))
+  return '\n' + '\n'.join(_makebox(in_lines, box)) + '\n'
 
-def makelist(in_lines, bullet, width):
-  in_lines = tuple(reflow(in_lines, width))
-  indent = display_len(bullet)
-  joiner = '\n' + (' ' * indent)
-  return bullet + joiner.join(in_lines) + '\n'
+def pad_cell(line, widths, padding=1):
+  for element, width in zip(line, widths):
+    element = element.strip()
+    pad = width - display_len(element)
+    yield u' ' * (pad + padding) + element + u' '
 
-def makequote(in_lines, mark):
-  return mark + ('\n' + mark).join(in_lines) + '\n'
+def _maketable(in_cells, box, widths):
+  heads = map(lambda w: box[1] * (w + 2), widths)
+  yield box[0] + box[9].join(heads) + box[2]
+  for line in in_cells:
+    yield box[3] + box[3].join(pad_cell(line, widths)) + box[3]
+  yield box[6] + box[10].join(heads) + box[8]
 
-def is_list_start(line):
-  line = line.strip()
-  for bullet in _list_bullets:
-    if line.startswith(bullet):
-      return True
-  return False
+def maketable(in_cells, box, widths):
+  return '\n' + '\n'.join(_maketable(in_cells, box, widths)) + '\n'
 
-def _emphasis(text, emphasis_char, ):
+
+def _shift_modify(text, emphasis_char):
   for char in text:
-    yield char
     if char.isalnum():
-      yield emphasis_char
+      offset = ord(char)
+      if offset >= ord('A') and offset <= ord('Z'):
+        yield _unichr(emphasis_char + offset - ord('A'))
+        continue
+      if offset >= ord('a') and offset <= ord('z'):
+        yield _unichr(emphasis_char + offset - ord('a') + 26)
+        continue
+    yield char
 
 def emphasis(text, emphasis_char):
-  inner = process_run(text)
-  return ''.join(_emphasis(inner, emphasis_char))
+  return ''.join(_shift_modify(text, emphasis_char))
 
-def emphasis_runs(input, splitter, emphasis_char):
-  runs = input.split(splitter)
-  parts = []
-  for index, run in enumerate(runs):
-    if index % 2:
-      parts.append(emphasis(run, emphasis_char))
+def _join_modify(text, modifier):
+  for char in text:
+    if char.isalnum():
+      yield char
+      yield modifier
     else:
-      parts.append(process_run(run))
-  return ''.join(parts)
+      yield char
 
-def process_run(input):
-  if input.find('___') >= 0:
-    return emphasis_runs(input, '___', _unichr(0x0333))
-  if input.find('__') >= 0:
-    return emphasis_runs(input, '__', _unichr(0x0332))
-  if input.find('_') >= 0:
-    return emphasis_runs(input, '_', _unichr(0x20E8))
-  if input.find('`') >= 0:
-    return emphasis_runs(input, '`', _unichr(0x0325))
-  return input
+def strike(text):
+  return ''.join(_join_modify(text, _unichr(0x0336)))
 
-def get_columns():
-  dimensions = map(int,  os.popen('stty size', 'r').read().split())
-  return dimensions[1]
+def block_indent(line):
+  if line.startswith(u'▌ '):
+    return u'█ '+ line[1:]
+  if line.startswith(u'█ '):
+    return u'█▌ ' + line[2:]
+  return u'▌ ' + line
 
-class Processor:
-  def __init__(self, columns=None):
-    self.box_lines = []
-    self.text_lines = []
-    self.list_lines = []
-    self.is_list = False
-    self.buffer = ""
-    self.width = columns or get_columns()
+def filter_at_end(items):
+  items = list(items)
+  while items:
+    if items[-1]:
+      break
+    items.pop()
+  return tuple(items)
 
-  def output_text(self, line):
-    self.buffer = self.buffer + line.encode(ENCODING)
+def encode_block(text):
+  return ('\n%s\n' % text).encode(ENCODING)
 
-  def flush_output(self, output, prepend=None):
-    if prepend:
-      lines = self.buffer.split('\n')
-      lines = map(lambda l : prepend + l, lines)
-      self.buffer = '\n'.join(lines)
-    output.write(self.buffer)
+def encode_lines(lines):
+  return encode_block('\n'.join(lines))
 
-  def reflow(self, lines):
-    return tuple(reflow(lines, self.width))
+class MarklessRenderer(mistune.Renderer):
 
-  def flush_text(self):
-    if self.text_lines:
-      formatted_lines = map(process_run, self.reflow(self.text_lines))
-      self.output_text('\n'.join(formatted_lines))
-      self.output_text('\n\n')
-      self.text_lines = []
+  def __init__(self):
+    super(MarklessRenderer, self).__init__()
+    self._cell_counter = 0
 
-  def flush_list(self):
-    if self.list_lines:
-      formatted_lines = map(process_run, self.list_lines)
-      self.output_text(makelist(formatted_lines, u'• ', self.width - 2))
-      self.list_lines = []
+  def linebreak(self):
+    return '\n'
 
-  def flush_box(self):
-    if self.box_lines:
-      self.output_text(makebox(self.box_lines, _box_code))
-      self.output_text('\n')
-      self.box_lines = []
+  def text(self, text):
+    return text
 
-  def flush_all(self):
-    self.flush_box()
-    self.flush_text()
-    self.flush_list()
-    self.is_list = False
+  def paragraph(self, text):
+    lines = text.decode(ENCODING).split('\n')
+    return encode_lines(reflow(lines, get_columns()))
 
-  def process_lines(self, lines):
-    for line in lines:
-      if not line.strip():
-        self.flush_all()
-        continue
-      start_hash = count_start(line, '#')
-      if start_hash:
-        self.flush_all()
-        content = self.reflow([process_run(line[start_hash:].strip())])
-        if start_hash == 1:
-          self.output_text(makebox(content, _box_double))
-        elif start_hash == 2:
-          self.output_text(makebox(content, _box_heavy))
-        else:
-          self.output_text(makebox(content, _box_light))
-        self.output_text('\n')
-        continue
-      start_greater = count_start(line, '>')
-      if start_greater:
-        self.flush_all()
-        prefix = u'▌' * start_greater
-        self.output_text(makequote([line[start_greater:].strip()], prefix))
-        continue
-      start_spaces = count_start(line, ' ') + count_start(line, '\t') * 4
-      if start_spaces >= 4:
-        self.flush_text()
-        self.flush_list()
-        self.box_lines.append(line[4:].rstrip())
-        continue
-      self.flush_box()
-      if is_list_start(line):
-        self.flush_all()
-        self.is_list = True
-        self.list_lines.append(line[1:].strip())
-        continue
-      if self.is_list:
-        self.list_lines.append(line.strip())
-        continue
-      self.text_lines.append(line.strip())
-    # Flush everything
-    self.flush_all()
+  def link(self, link, title, content):
+    return "[" + content + "]"
 
-  def process(self, input_file):
-    lines = itertools.imap(lambda l : l.decode(ENCODING), input_file)
-    self.process_lines(lines)
+  def strikethrough(self, text):
+    uni_data = text.decode(ENCODING)
+    return strike(uni_data).encode(ENCODING)
+
+  def emphasis(self, text):
+    uni_data = text.decode(ENCODING)
+    return emphasis(uni_data, 0x1D608).encode(ENCODING)
+
+  def double_emphasis(self, text):
+    uni_data = text.decode(ENCODING)
+    return emphasis(uni_data, 0x1D5D4).encode(ENCODING)
+
+  def codespan(self, text):
+    uni_data = text.decode(ENCODING)
+    return emphasis(uni_data, 0x1D670).encode(ENCODING)
+
+  def hrule(self):
+    return encode_block(u'–' * get_columns())
+
+  def header(self, text, level, raw=None):
+    lines = text.decode(ENCODING).split('\n')
+    if level == 1:
+      box = _box_double
+    elif level == 2:
+      box = _box_heavy
+    else:
+      box = _box_light
+    return makebox(lines, box).encode(ENCODING)
+
+  def block_code(self, code, lang):
+    uni_lines = filter_at_end(code.decode(ENCODING).split('\n'))
+    return makebox(uni_lines, _box_code).encode(ENCODING)
+
+  def block_quote(self, text):
+    uni_lines = text.decode(ENCODING).split('\n')
+    uni_lines = itertools.imap(block_indent, uni_lines)
+    return encode_lines(uni_lines)
+
+  def list(self, body, ordered=True):
+    items = filter(None, body.decode(ENCODING).split(_list_separator))
+    list_lines = []
+    for counter, item in enumerate(items):
+      if ordered:
+        bullet = unicode(counter + 1) + ') '
+      else:
+        bullet = u'• '
+      indent = display_len(bullet)
+      lines = filter(None, item.split('\n'))
+      list_lines.append(bullet + lines[0])
+      for line in lines[1:]:
+        list_lines.append(' ' * indent + line)
+
+    return encode_lines(list_lines)
+
+  def list_item(self, text):
+    return text + _list_separator
+
+  def table(self, header, body):
+    content = header + '\n' + body
+    uni_lines = filter(None, content.decode(ENCODING).split(_row_separator))
+    uni_cells = map(lambda line: line.split(_cell_separator), uni_lines)
+    rotated = list(itertools.izip_longest(*uni_cells))
+    widths = map(max_display_len, rotated)
+    return encode_block(maketable(uni_cells, _box_double, widths))
+
+  def table_row(self, content):
+    self._cell_counter = 0
+    return content.strip() + _row_separator
+
+  def table_cell(self, content, **flags):
+    uni_data = content.decode(ENCODING)
+    if self._cell_counter:
+      uni_data = _cell_separator + uni_data
+    self._cell_counter+=1
+    return uni_data.encode(ENCODING)
+
 
 def process(input_file, output_file, prefix):
-  processor = Processor()
-  processor.process(input_file)
-  processor.flush_output(output_file, prefix)
+  renderer = MarklessRenderer()
+  markdown = mistune.Markdown(renderer=renderer)
+  output_file.write(markdown(input_file.read()))
 
 def usage(command):
   sys.stderr.write(
